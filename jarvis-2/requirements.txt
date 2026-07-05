@@ -1,0 +1,11 @@
+# --- Module 1: Core Backend ---
+pydantic==2.9.2
+pydantic-settings==2.6.1
+
+# --- Testing ---
+pytest==8.3.3
+pytest-asyncio==0.24.0
+
+# Future modules will add their dependencies here as they're built
+# (fastapi, uvicorn, anthropic, etc.) so this file always reflects
+# exactly what the current state of the project needs.

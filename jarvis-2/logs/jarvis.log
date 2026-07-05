@@ -1,0 +1,11 @@
+2026-07-02 18:55:49 | ERROR    | backend.core.event_bus | Error handling event 'test_event': intentional failure for testing
+Traceback (most recent call last):
+  File "/Users/coltonbrinsko/Downloads/jarvis-2/backend/core/event_bus.py", line 124, in _run_handler_safely
+    await handler(event)
+  File "/Users/coltonbrinsko/Downloads/jarvis-2/backend/tests/test_event_bus.py", line 58, in failing_handler
+    raise ValueError("intentional failure for testing")
+ValueError: intentional failure for testing
+2026-07-02 18:55:52 | INFO     | __main__ | Starting Jarvis (development environment)
+2026-07-02 18:55:52 | INFO     | __main__ | Gateway will run on 127.0.0.1:8000
+2026-07-02 18:55:52 | INFO     | __main__ | Handled startup event from 'main': {'message': 'Core foundation initialized'}
+2026-07-02 18:55:52 | INFO     | __main__ | Module 1 foundation is healthy. Nothing else is running yet.
