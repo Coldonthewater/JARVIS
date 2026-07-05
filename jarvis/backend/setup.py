@@ -1,0 +1,169 @@
+"""
+First-run setup wizard — creates config/.env for you, so you never
+have to hand-edit a config file just to get Jarvis running.
+
+Why this exists:
+    Editing .env by hand works, but it's a developer workflow, not
+    something Jarvis should require forever. This wizard runs
+    automatically the first time `python -m backend.main` is launched
+    and no config/.env exists yet. It handles the two things that
+    otherwise require manual file editing:
+      1. The gateway auth token — generated automatically, you never
+         need to run a separate command for this.
+      2. AI provider setup — walks you through picking Ollama (local,
+         no key needed) and/or pasting a cloud API key, entirely via
+         prompts.
+
+    You can also re-run it anytime with:
+        python -m backend.setup
+
+Design choice:
+    This writes directly to config/.env using simple text templating
+    rather than importing Settings/pydantic — the wizard needs to run
+    BEFORE settings are loaded (since settings loading is what reads
+    this file), so it can't depend on the config system itself.
+"""
+
+import secrets
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ENV_PATH = PROJECT_ROOT / "config" / ".env"
+ENV_EXAMPLE_PATH = PROJECT_ROOT / "config" / ".env.example"
+
+
+def _prompt_yes_no(question: str, default: bool = True) -> bool:
+    suffix = " [Y/n] " if default else " [y/N] "
+    answer = input(question + suffix).strip().lower()
+    if not answer:
+        return default
+    return answer.startswith("y")
+
+
+def _prompt_text(question: str, secret: bool = False) -> str:
+    answer = input(question).strip()
+    return answer
+
+
+def run_setup_wizard() -> None:
+    print("\n" + "=" * 60)
+    print("  Welcome to Jarvis — first-time setup")
+    print("=" * 60)
+    print(
+        "\nThis will create config/.env for you. You won't need to "
+        "edit\nany config files by hand — answer a few questions and "
+        "Jarvis\nwill be ready to run.\n"
+    )
+
+    values: dict[str, str] = {}
+
+    # --- Gateway auth token: always auto-generated, no prompt needed ---
+    values["GATEWAY_AUTH_TOKEN"] = secrets.token_hex(32)
+    print("✓ Generated a secure gateway auth token automatically.\n")
+
+    # --- AI provider setup ---
+    print("Now let's set up at least one AI provider.\n")
+
+    use_ollama = _prompt_yes_no(
+        "Use a local model (Ollama)? Free, private, works offline.", default=True
+    )
+    values["OLLAMA_HOST"] = "http://localhost:11434"
+    values["OLLAMA_MODEL"] = "llama3.1"
+    if use_ollama:
+        print(
+            "  Note: this requires Ollama to be installed and running "
+            "(https://ollama.com)\n  and the model pulled: ollama pull llama3.1\n"
+        )
+
+    print("Optionally add a cloud provider for complex requests (code, ")
+    print("planning, research). Leave blank to skip any of these.\n")
+
+    openai_key = _prompt_text("OpenAI API key (or press Enter to skip): ")
+    google_key = _prompt_text("Google API key (or press Enter to skip): ")
+    anthropic_key = _prompt_text("Anthropic API key (or press Enter to skip): ")
+
+    values["OPENAI_API_KEY"] = openai_key
+    values["GOOGLE_API_KEY"] = google_key
+    values["ANTHROPIC_API_KEY"] = anthropic_key
+
+    # Decide sensible routing defaults based on what was actually provided.
+    values["AI_LOCAL_PROVIDER"] = "ollama" if use_ollama else "openai"
+    if openai_key:
+        cloud_default = "openai"
+    elif anthropic_key:
+        cloud_default = "anthropic"
+    elif google_key:
+        cloud_default = "gemini"
+    else:
+        cloud_default = "ollama" if use_ollama else "openai"
+    values["AI_CLOUD_PROVIDER"] = cloud_default
+    values["AI_FALLBACK_PROVIDER"] = cloud_default
+
+    if not use_ollama and not any([openai_key, google_key, anthropic_key]):
+        print(
+            "\n⚠ No provider configured — Jarvis will run, but AI requests "
+            "will fail until\n  you add one. You can re-run this setup "
+            "anytime with: python -m backend.setup\n"
+        )
+
+    # --- Gateway network ---
+    print("\nGateway network settings (press Enter to accept defaults):\n")
+    allow_remote = _prompt_yes_no(
+        "Allow other devices on your network to connect to Jarvis?", default=False
+    )
+    values["GATEWAY_HOST"] = "0.0.0.0" if allow_remote else "127.0.0.1"
+    values["GATEWAY_PORT"] = "8000"
+    if allow_remote:
+        print(
+            "\n  Remember: other devices need your gateway auth token "
+            "(generated above)\n  and either your LAN IP or a Tailscale "
+            "connection to reach this machine.\n  See README.md for details.\n"
+        )
+
+    _write_env_file(values)
+    print(f"✓ Created {ENV_PATH}\n")
+    print("Setup complete! Starting Jarvis...\n")
+
+
+def _write_env_file(values: dict[str, str]) -> None:
+    ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Generated by Jarvis's first-run setup wizard (backend/setup.py).",
+        "# You can edit this file directly, or re-run: python -m backend.setup",
+        "",
+        "APP_NAME=Jarvis",
+        "ENVIRONMENT=development",
+        "LOG_LEVEL=INFO",
+        "",
+        f"ANTHROPIC_API_KEY={values.get('ANTHROPIC_API_KEY', '')}",
+        f"OPENAI_API_KEY={values.get('OPENAI_API_KEY', '')}",
+        f"GOOGLE_API_KEY={values.get('GOOGLE_API_KEY', '')}",
+        "",
+        f"OLLAMA_HOST={values.get('OLLAMA_HOST', 'http://localhost:11434')}",
+        f"OLLAMA_MODEL={values.get('OLLAMA_MODEL', 'llama3.1')}",
+        "",
+        f"AI_LOCAL_PROVIDER={values.get('AI_LOCAL_PROVIDER', 'ollama')}",
+        f"AI_CLOUD_PROVIDER={values.get('AI_CLOUD_PROVIDER', 'openai')}",
+        f"AI_FALLBACK_PROVIDER={values.get('AI_FALLBACK_PROVIDER', 'openai')}",
+        "",
+        f"GATEWAY_HOST={values.get('GATEWAY_HOST', '127.0.0.1')}",
+        f"GATEWAY_PORT={values.get('GATEWAY_PORT', '8000')}",
+        f"GATEWAY_AUTH_TOKEN={values.get('GATEWAY_AUTH_TOKEN', '')}",
+        "",
+    ]
+    ENV_PATH.write_text("\n".join(lines), encoding="utf-8")
+
+
+def ensure_configured() -> None:
+    """
+    Called at the top of backend.main before settings are loaded. If
+    config/.env doesn't exist yet, runs the wizard automatically so
+    the app can start with zero manual file editing.
+    """
+    if not ENV_PATH.exists():
+        run_setup_wizard()
+
+
+if __name__ == "__main__":
+    # Allows re-running setup anytime with: python -m backend.setup
+    run_setup_wizard()
